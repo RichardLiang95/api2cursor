@@ -1,0 +1,16 @@
+services:
+  api2cursor:
+    build: .
+    ports:
+      - "${PROXY_PORT:-3029}:${PROXY_PORT:-3029}"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:${PROXY_PORT:-3029}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
