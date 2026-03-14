@@ -1,7 +1,7 @@
 """对话级文件日志
 
 将同一段多轮对话聚合到一个 JSON 文件中，而不是按单次请求散落成多个文件。
-仅在 DEBUG 开启时记录。
+仅在详细日志模式开启时记录。
 日志目录: data/conversations/YYYY-MM-DD/{conversation_id}.json
 """
 
@@ -18,6 +18,7 @@ from typing import Any
 
 from config import Config
 from settings import DATA_DIR
+import settings
 from utils.http import gen_id
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 _LOG_DIR = os.path.join(DATA_DIR, 'conversations')
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+_STREAM_KEEP_HEAD = 12
+_STREAM_KEEP_TAIL = 12
 
 
 def start_turn(
@@ -40,7 +43,7 @@ def start_turn(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """创建一条新的对话 turn 上下文。"""
-    if not Config.DEBUG:
+    if settings.get_debug_mode() != 'verbose':
         return None
 
     now = datetime.utcnow().isoformat() + 'Z'
@@ -66,6 +69,10 @@ def start_turn(
         'stream_trace': {
             'upstream_events': [],
             'client_events': [],
+            'upstream_total': 0,
+            'client_total': 0,
+            'upstream_dropped': 0,
+            'client_dropped': 0,
             'summary': {},
         },
         'error': None,
@@ -111,18 +118,18 @@ def attach_client_response(turn: dict[str, Any] | None, response_data: Any) -> N
 
 
 def append_upstream_event(turn: dict[str, Any] | None, event: Any) -> None:
-    """记录一条上游流式事件。"""
+    """记录一条上游流式事件，超限时截断保留头尾。"""
     if turn is None:
         return
-    turn['stream_trace']['upstream_events'].append(deep_copy_jsonable(event))
+    _append_stream_event(turn['stream_trace'], 'upstream', deep_copy_jsonable(event))
     _touch(turn)
 
 
 def append_client_event(turn: dict[str, Any] | None, event: Any) -> None:
-    """记录一条返回给客户端的流式事件。"""
+    """记录一条返回给客户端的流式事件，超限时截断保留头尾。"""
     if turn is None:
         return
-    turn['stream_trace']['client_events'].append(deep_copy_jsonable(event))
+    _append_stream_event(turn['stream_trace'], 'client', deep_copy_jsonable(event))
     _touch(turn)
 
 
@@ -149,13 +156,22 @@ def finalize_turn(
     duration_ms: int = 0,
 ) -> None:
     """将 turn 追加/更新到对应的会话日志文件。"""
-    if turn is None or not Config.DEBUG:
+    if turn is None or settings.get_debug_mode() != 'verbose':
         return
 
     turn['updated_at'] = datetime.utcnow().isoformat() + 'Z'
     turn['duration_ms'] = duration_ms
     if usage is not None:
         turn['usage'] = deep_copy_jsonable(usage)
+
+    stream_trace = turn.get('stream_trace', {})
+    summary = stream_trace.setdefault('summary', {})
+    summary['upstream_total'] = stream_trace.get('upstream_total', 0)
+    summary['client_total'] = stream_trace.get('client_total', 0)
+    summary['upstream_dropped'] = stream_trace.get('upstream_dropped', 0)
+    summary['client_dropped'] = stream_trace.get('client_dropped', 0)
+    if stream_trace.get('upstream_dropped', 0) or stream_trace.get('client_dropped', 0):
+        summary['truncated'] = True
 
     threading.Thread(target=_write_turn, args=(deep_copy_jsonable(turn),), daemon=True).start()
 
@@ -235,6 +251,29 @@ def _get_lock(conversation_id: str) -> threading.Lock:
         return _LOCKS[conversation_id]
 
 
+def _append_stream_event(stream_trace: dict[str, Any], kind: str, event: Any) -> None:
+    events_key = f'{kind}_events'
+    total_key = f'{kind}_total'
+    dropped_key = f'{kind}_dropped'
+
+    events = stream_trace.setdefault(events_key, [])
+    stream_trace[total_key] = stream_trace.get(total_key, 0) + 1
+
+    # 前 KEEP_HEAD 条完整保留；之后只保留最后 KEEP_TAIL 条，
+    # 中间部分通过 dropped 计数折叠，避免文件膨胀。
+    if len(events) < (_STREAM_KEEP_HEAD + _STREAM_KEEP_TAIL):
+        events.append(event)
+        return
+
+    head = events[:_STREAM_KEEP_HEAD]
+    tail = events[_STREAM_KEEP_HEAD:]
+    if len(tail) >= _STREAM_KEEP_TAIL:
+        tail.pop(0)
+        stream_trace[dropped_key] = stream_trace.get(dropped_key, 0) + 1
+    tail.append(event)
+    stream_trace[events_key] = head + tail
+
+
 def _touch(turn: dict[str, Any] | None) -> None:
     if turn is None:
         return
@@ -259,25 +298,126 @@ def _pick_explicit_conversation_id(payload: dict[str, Any]) -> str:
 
 
 def _conversation_seed(route: str, payload: dict[str, Any]) -> str:
+    """生成稳定的对话种子。
+
+    关键原则：不能直接把整段历史消息都放进 seed，
+    否则每一轮历史增长都会导致 conversation_id 改变，最终每次请求都新建文件。
+
+    这里改为基于“对话根消息”生成种子：
+    - chat/messages: 第一条 user + 第一条 assistant（没有 assistant 时退化为第一条 user）
+    - responses: input 中的第一条 user + 第一条 assistant（没有 assistant 时退化为第一条 user）
+    """
     if route == 'chat':
-        messages = payload.get('messages', [])
-        return 'chat|' + _normalize_messages_seed(messages)
+        return 'chat|' + _root_seed_from_messages(payload.get('messages', []))
 
     if route == 'responses':
-        instructions = payload.get('instructions') or ''
-        input_data = payload.get('input', [])
-        if isinstance(input_data, str):
-            seed_input = input_data
-        else:
-            seed_input = json.dumps(input_data, ensure_ascii=False, default=str)
-        return 'responses|' + instructions + '|' + seed_input
+        return 'responses|' + _root_seed_from_responses_input(payload)
 
     if route == 'messages':
-        messages = payload.get('messages', [])
         system = payload.get('system', '')
-        return 'messages|' + str(system) + '|' + json.dumps(messages, ensure_ascii=False, default=str)
+        root = _root_seed_from_messages(payload.get('messages', []))
+        return 'messages|' + str(system) + '|' + root
 
-    return route + '|' + json.dumps(payload, ensure_ascii=False, default=str)
+    return route + '|' + _pick_explicit_conversation_id(payload)
+
+
+def _root_seed_from_messages(messages: Any) -> str:
+    if not isinstance(messages, list):
+        return ''
+
+    first_user = None
+    first_assistant = None
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get('role', '')
+        if role in ('system', 'developer'):
+            continue
+        normalized = {
+            'role': role,
+            'content': _normalize_content(msg.get('content')),
+            'tool_call_id': msg.get('tool_call_id', ''),
+            'tool_calls': [
+                {
+                    'id': tc.get('id', ''),
+                    'name': (tc.get('function') or {}).get('name', ''),
+                }
+                for tc in msg.get('tool_calls', [])
+                if isinstance(tc, dict)
+            ],
+        }
+        if role == 'user' and first_user is None:
+            first_user = normalized
+        elif role == 'assistant' and first_assistant is None:
+            first_assistant = normalized
+        if first_user is not None and first_assistant is not None:
+            break
+
+    seed_parts = []
+    if first_user is not None:
+        seed_parts.append(first_user)
+    if first_assistant is not None:
+        seed_parts.append(first_assistant)
+    return json.dumps(seed_parts, ensure_ascii=False, separators=(',', ':'))
+
+
+def _root_seed_from_responses_input(payload: dict[str, Any]) -> str:
+    instructions = payload.get('instructions') or ''
+    input_data = payload.get('input', [])
+
+    if isinstance(input_data, str):
+        seed_input = input_data
+    elif isinstance(input_data, list):
+        seed_input = _root_seed_from_responses_items(input_data)
+    else:
+        seed_input = json.dumps(input_data, ensure_ascii=False, default=str)
+
+    return instructions + '|' + seed_input
+
+
+def _root_seed_from_responses_items(items: list[Any]) -> str:
+    first_user = None
+    first_assistant = None
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get('type', '')
+        role = item.get('role', '')
+
+        if item_type in ('message', 'input_text', 'output_text'):
+            normalized = {
+                'type': item_type,
+                'role': role,
+                'content': _normalize_content(
+                    item.get('content')
+                    or item.get('text')
+                    or item.get('input_text')
+                    or item.get('output_text')
+                    or ''
+                ),
+            }
+            if role == 'user' and first_user is None:
+                first_user = normalized
+            elif role == 'assistant' and first_assistant is None:
+                first_assistant = normalized
+
+        elif item_type == 'function_call' and first_assistant is None:
+            first_assistant = {
+                'type': 'function_call',
+                'name': item.get('name', ''),
+                'call_id': item.get('call_id', ''),
+            }
+
+        if first_user is not None and first_assistant is not None:
+            break
+
+    seed_parts = []
+    if first_user is not None:
+        seed_parts.append(first_user)
+    if first_assistant is not None:
+        seed_parts.append(first_assistant)
+    return json.dumps(seed_parts, ensure_ascii=False, separators=(',', ':'))
 
 
 def _normalize_messages_seed(messages: Any) -> str:

@@ -55,6 +55,17 @@
         </div>
         <div class="hint" id="envKey"></div>
       </div>
+      <div class="field">
+        <label>日志模式</label>
+        <div class="input-wrap">
+          <select id="debugMode">
+            <option value="off">关闭</option>
+            <option value="simple">简易日志（仅控制台）</option>
+            <option value="verbose">详细日志（写入文件）</option>
+          </select>
+        </div>
+        <div class="hint">关闭：不输出调试日志；简易日志：仅控制台输出；详细日志：额外写入对话级文件日志，并对流式事件做采样截断。</div>
+      </div>
       <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
     </div>
 

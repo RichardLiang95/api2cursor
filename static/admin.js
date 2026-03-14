@@ -66,6 +66,7 @@ async function loadDashboard() {
     const s = await api('/api/admin/settings');
     document.getElementById('targetUrl').value = s.proxy_target_url || '';
     document.getElementById('proxyKey').value = s.proxy_api_key || '';
+    document.getElementById('debugMode').value = s.debug_mode || 'off';
     document.getElementById('envUrl').textContent = s.env_target_url ? '环境变量: ' + s.env_target_url : '';
     document.getElementById('envKey').textContent = s.env_api_key ? '环境变量: (已配置)' : '环境变量: (未设置)';
     await loadMappings();
@@ -130,6 +131,7 @@ async function saveSettings() {
       body: JSON.stringify({
         proxy_target_url: document.getElementById('targetUrl').value.trim(),
         proxy_api_key: document.getElementById('proxyKey').value.trim(),
+        debug_mode: document.getElementById('debugMode').value,
       }),
     });
     toast('设置已保存');

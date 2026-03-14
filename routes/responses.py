@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any
 
+import settings
 from flask import Blueprint, jsonify, request
 
 from adapters.cc_anthropic_adapter import cc_to_messages_request, messages_to_cc_response
@@ -64,7 +65,7 @@ bp = Blueprint('responses', __name__)
 
 def _dbg(message: str) -> None:
     """仅在调试模式下输出详细日志。"""
-    if Config.DEBUG:
+    if settings.get_debug_mode() in ('simple', 'verbose'):
         logger.info('[响应生成调试] %s', message)
 
 
@@ -203,7 +204,7 @@ def _handle_openai_stream(
                 attach_client_response(turn, {
                     'type': 'responses.stream.summary',
                     'model': ctx.client_model,
-                    'events': client_events,
+                    'event_count': len(client_events),
                 })
                 finalize_turn(turn)
                 return
@@ -319,7 +320,7 @@ def _handle_responses_stream(
         attach_client_response(turn, {
             'type': 'responses.stream.summary',
             'model': ctx.client_model,
-            'events': client_events,
+            'event_count': len(client_events),
         })
         finalize_turn(turn)
 
@@ -422,7 +423,7 @@ def _handle_gemini_stream(
         attach_client_response(turn, {
             'type': 'responses.stream.summary',
             'model': ctx.client_model,
-            'events': client_events,
+            'event_count': len(client_events),
         })
         finalize_turn(turn)
 
@@ -530,7 +531,7 @@ def _handle_anthropic_stream(
         attach_client_response(turn, {
             'type': 'responses.stream.summary',
             'model': ctx.client_model,
-            'events': client_events,
+            'event_count': len(client_events),
         })
         finalize_turn(turn)
 

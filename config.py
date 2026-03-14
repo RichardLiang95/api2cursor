@@ -20,5 +20,17 @@ class Config:
     API_TIMEOUT = int(os.getenv('API_TIMEOUT', '300'))
     # 访问鉴权密钥，留空则不启用鉴权
     ACCESS_API_KEY = os.getenv('ACCESS_API_KEY', '')
-    # 调试模式：开启后输出详细的请求/响应日志
-    DEBUG = os.getenv('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+
+    # 调试模式分级：
+    # - off: 关闭调试
+    # - simple: 仅控制台调试日志
+    # - verbose: 控制台调试 + 详细文件日志
+    _debug_mode_raw = os.getenv('DEBUG_MODE', '').strip().lower()
+    _legacy_debug = os.getenv('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+    if _debug_mode_raw in ('off', 'simple', 'verbose'):
+        DEBUG_MODE = _debug_mode_raw
+    else:
+        DEBUG_MODE = 'simple' if _legacy_debug else 'off'
+
+    DEBUG = DEBUG_MODE in ('simple', 'verbose')
+    VERBOSE_FILE_LOG = DEBUG_MODE == 'verbose'

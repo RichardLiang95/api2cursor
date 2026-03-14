@@ -86,6 +86,7 @@ def get_settings():
     return jsonify({
         'proxy_target_url': s.get('proxy_target_url', ''),
         'proxy_api_key': s.get('proxy_api_key', ''),
+        'debug_mode': s.get('debug_mode', '') or Config.DEBUG_MODE,
         'env_target_url': Config.PROXY_TARGET_URL,
         'env_api_key': '***' if Config.PROXY_API_KEY else '',
     })
@@ -99,7 +100,7 @@ def update_settings():
         return err
     data = request.get_json(force=True)
     s = settings.get()
-    for key in ('proxy_target_url', 'proxy_api_key'):
+    for key in ('proxy_target_url', 'proxy_api_key', 'debug_mode'):
         if key in data:
             s[key] = data[key]
     return _save_and_respond(s, '全局设置已更新')

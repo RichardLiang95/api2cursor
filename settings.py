@@ -22,6 +22,7 @@ _cache = None
 _DEFAULTS = {
     'proxy_target_url': '',
     'proxy_api_key': '',
+    'debug_mode': '',
     'model_mappings': {},
 }
 
@@ -75,6 +76,12 @@ def get_url():
 def get_key():
     """获取当前生效的 API 密钥，优先使用持久化配置。"""
     return get().get('proxy_api_key') or Config.PROXY_API_KEY
+
+
+def get_debug_mode():
+    """获取当前生效的调试模式，优先使用持久化配置。"""
+    mode = (get().get('debug_mode') or '').strip().lower()
+    return mode if mode in ('off', 'simple', 'verbose') else Config.DEBUG_MODE
 
 
 def resolve_model(model_name):

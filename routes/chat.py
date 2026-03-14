@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any
 
+import settings
 from flask import Blueprint, jsonify, request
 
 from adapters.cc_anthropic_adapter import (
@@ -79,7 +80,7 @@ bp = Blueprint('chat', __name__)
 
 def _dbg(message: str) -> None:
     """仅在调试模式下输出详细日志。"""
-    if Config.DEBUG:
+    if settings.get_debug_mode() in ('simple', 'verbose'):
         logger.info('[聊天补全调试] %s', message)
 
 
@@ -233,7 +234,7 @@ def _handle_openai_stream(
                 attach_client_response(turn, {
                     'type': 'chat.completion.stream.summary',
                     'model': ctx.client_model,
-                    'chunks': client_chunks,
+                    'chunk_count': len(client_chunks),
                     'usage': last_usage,
                 })
                 finalize_turn(turn, usage=last_usage)
@@ -274,7 +275,7 @@ def _handle_openai_stream(
         attach_client_response(turn, {
             'type': 'chat.completion.stream.summary',
             'model': ctx.client_model,
-            'chunks': client_chunks,
+            'chunk_count': len(client_chunks),
             'usage': last_usage,
         })
         finalize_turn(turn, usage=last_usage)
@@ -384,7 +385,7 @@ def _handle_responses_stream(
         attach_client_response(turn, {
             'type': 'chat.completion.stream.summary',
             'model': ctx.client_model,
-            'chunks': client_chunks,
+            'chunk_count': len(client_chunks),
         })
         finalize_turn(turn)
 
@@ -486,7 +487,7 @@ def _handle_gemini_stream(
         attach_client_response(turn, {
             'type': 'chat.completion.stream.summary',
             'model': ctx.client_model,
-            'chunks': client_chunks,
+            'chunk_count': len(client_chunks),
         })
         finalize_turn(turn)
 
@@ -599,7 +600,7 @@ def _handle_anthropic_stream(
         attach_client_response(turn, {
             'type': 'chat.completion.stream.summary',
             'model': ctx.client_model,
-            'chunks': client_chunks,
+            'chunk_count': len(client_chunks),
         })
         finalize_turn(turn)
 

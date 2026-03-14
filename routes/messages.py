@@ -106,7 +106,7 @@ def messages_passthrough():
             set_stream_summary(turn, summary)
             attach_client_response(turn, {
                 'type': 'messages.stream.summary',
-                'events': client_events,
+                'event_count': len(client_events),
             })
             finalize_turn(turn)
         except req_lib.RequestException as e:

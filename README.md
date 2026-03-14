@@ -72,7 +72,8 @@ docker compose up -d
 | `PROXY_PORT` | 服务监听端口 | `3029` |
 | `API_TIMEOUT` | 请求超时（秒） | `300` |
 | `ACCESS_API_KEY` | 访问鉴权密钥，留空不启用 | |
-| `DEBUG` | 调试模式，输出详细请求/响应日志 | `false` |
+| `DEBUG` | 兼容旧版调试开关，开启后等价于 `DEBUG_MODE=simple` | `false` |
+| `DEBUG_MODE` | 调试模式：`off` / `simple` / `verbose` | `off` |
 
 ### 模型映射
 
@@ -80,14 +81,35 @@ docker compose up -d
 
 - **Cursor 模型名** — 在 Cursor 自定义模型中填入的名称
 - **上游模型名** — 发送到中转站的实际模型名
-- **后端类型** — `openai` (CC 格式) / `anthropic` (Messages 格式) / `responses` (Responses 格式) / `auto` (自动检测)
+- **后端类型** — `openai` (CC 格式) / `anthropic` (Messages 格式) / `responses` (Responses 格式) / `gemini` (Gemini Contents 格式) / `auto` (自动检测)
 - **自定义地址/密钥** — 可选，覆盖全局设置，实现分流到不同中转站
+- **日志模式** — 可在管理面板全局设置中切换 `off` / `simple` / `verbose`
 
 **示例**：在 Cursor 中添加 `claude-sonnet-4-5-20250929`，映射到上游 `gpt-5.3-codex`，后端选 `openai`。Cursor 会用 CC 格式发送请求，代理直接转发到中转站的 `/v1/chat/completions`。
 
 如果你的中转站只支持 `/v1/responses`，可以把后端类型选成 `responses`。此时代理会把 Cursor 发来的请求转换或透传为 Responses 格式，再发往中转站的 `/v1/responses`。
 
 > **提示**：使用 Claude 风格的模型名（如 `claude-sonnet-4-5-20250929`）可以让 Cursor 显示思考过程（thinking）。
+
+### 调试日志模式
+
+项目支持三档调试模式，可通过环境变量 `DEBUG_MODE` 或管理面板全局设置切换：
+
+- `off` — 关闭调试日志
+- `simple` — 仅输出控制台调试日志，不写文件
+- `verbose` — 输出控制台调试日志，并写入详细的对话级文件日志
+
+详细日志会写入：
+
+```text
+data/conversations/YYYY-MM-DD/{conversation_id}.json
+```
+
+特性：
+- 同一段多轮对话聚合到同一个文件
+- 自动记录 client request、upstream request/response、client response、错误信息
+- 流式事件只保留前 12 条和后 12 条，中间部分折叠计数，避免文件膨胀
+- 流式 `client_response` 只记录 summary，不重复保存完整事件数组
 
 ### 在 Cursor 中配置
 
