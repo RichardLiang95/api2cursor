@@ -27,6 +27,7 @@ from routes.common import (
     build_openai_target,
     build_responses_target,
     build_route_context,
+    ensure_responses_cache_control,
     inject_instructions_anthropic,
     inject_instructions_cc,
     inject_instructions_responses,
@@ -247,6 +248,7 @@ def _handle_responses_backend(ctx: RouteContext, payload: dict[str, Any], turn: 
     payload = dict(payload)
     payload['model'] = ctx.upstream_model
     payload = inject_instructions_responses(payload, ctx.custom_instructions, ctx.instructions_position)
+    payload = ensure_responses_cache_control(payload)
     url, headers = build_responses_target(ctx)
     payload = apply_body_modifications(payload, ctx.body_modifications)
     headers = apply_header_modifications(headers, ctx.header_modifications)
@@ -628,5 +630,23 @@ def _finalize_responses_response(
 
     attach_client_response(turn, response_data)
     finalize_turn(turn, usage=response_data.get('usage'))
+
+    output_items = response_data.get('output', [])
+    if isinstance(output_items, list):
+        for item in output_items:
+            if not isinstance(item, dict) or item.get('type') != 'reasoning':
+                continue
+            summary = item.get('summary', [])
+            if not isinstance(summary, list):
+                continue
+            reasoning_text = ''.join(
+                part.get('text', '')
+                for part in summary
+                if isinstance(part, dict) and part.get('type') == 'summary_text'
+            )
+            if reasoning_text:
+                cc_messages = responses_to_cc(request.get_json(silent=True, force=True) or {}).get('messages', [])
+                thinking_cache.store_from_response(cc_messages, reasoning_text)
+                break
 
     return jsonify(response_data)

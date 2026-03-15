@@ -195,6 +195,23 @@ def inject_instructions_responses(payload: dict[str, Any], instructions: str, po
     return payload
 
 
+def ensure_responses_cache_control(payload: dict[str, Any]) -> dict[str, Any]:
+    """为 Responses 请求补齐自动 prompt caching 开关。
+
+    一些支持 `/v1/responses` 的上游会参考顶层 `cache_control` 来自动放置缓存断点。
+    Cursor 侧通常不会主动携带这个字段，因此这里在缺失时补一个保守的默认值，
+    同时允许调用方通过 body_modifications 或显式字段自行覆盖/关闭。
+    """
+    if not isinstance(payload, dict):
+        return payload
+    cache_control = payload.get('cache_control')
+    if isinstance(cache_control, dict) and cache_control.get('type'):
+        return payload
+    payload['cache_control'] = {'type': 'ephemeral'}
+    logger.info('已为 Responses 请求自动启用 cache_control=ephemeral')
+    return payload
+
+
 def inject_instructions_anthropic(payload: dict[str, Any], instructions: str, position: str = 'prepend') -> dict[str, Any]:
     """向 Anthropic Messages 请求注入自定义指令（写入 system 字段）。
 
